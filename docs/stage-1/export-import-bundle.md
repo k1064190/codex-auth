@@ -10,7 +10,7 @@ Added a local bundle flow: `codex-auth export <path>` and `codex-auth import --b
 
 ## How
 
-The bundle stores account metadata, matching auth snapshots, and registry settings in one private JSON file. Import validates the bundle before mutating local files, then merges by default or replaces local managed accounts when requested.
+The bundle stores account metadata, matching auth snapshots, and registry settings in one private JSON file. Import validates the bundle before mutating local files, writes sensitive files atomically, and rolls back pre-registry-save file changes on import failure. It merges by default or replaces local managed accounts when requested.
 
 ## Code locations
 
@@ -18,6 +18,7 @@ The bundle stores account metadata, matching auth snapshots, and registry settin
 - `src/cli/commands/export.zig`
 - `src/workflows/export.zig`
 - `tests/registry_bundle_test.zig`
+- `docs/commands/export.md`
 
 ## Retrospective
 

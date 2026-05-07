@@ -25,7 +25,6 @@ const hardenSensitiveFile = common.hardenSensitiveFile;
 const private_file_permissions = common.private_file_permissions;
 const readFileAlloc = common.readFileAlloc;
 const replaceOptionalStringAlloc = common.replaceOptionalStringAlloc;
-const writeFile = common.writeFile;
 const parseAutoSwitch = parse.parseAutoSwitch;
 const parseApiConfig = parse.parseApiConfig;
 const parseLiveConfig = parse.parseLiveConfig;
@@ -64,6 +63,11 @@ const BundleData = struct {
         for (self.accounts.items) |*account| account.deinit(allocator);
         self.accounts.deinit(allocator);
     }
+};
+
+const FileRollback = struct {
+    path: []u8,
+    backup_path: ?[]u8,
 };
 
 const BundleAccountOut = struct {
@@ -145,7 +149,7 @@ pub fn exportBundle(
     defer aw.deinit();
     try std.json.Stringify.value(out, .{ .whitespace = .indent_2 }, &aw.writer);
     try aw.writer.writeAll("\n");
-    try writeBundleFileAtomic(allocator, export_path, aw.written());
+    try writeSensitiveFileAtomic(allocator, export_path, aw.written());
     return accounts.items.len;
 }
 
@@ -167,6 +171,11 @@ pub fn importBundle(
     var summary = BundleImportSummary{};
     var replaced_account_keys = std.ArrayList([]u8).empty;
     defer freeOwnedStrings(allocator, &replaced_account_keys);
+    var file_rollbacks = std.ArrayList(FileRollback).empty;
+    defer cleanupFileRollbacks(allocator, &file_rollbacks);
+    var rollback_pending = true;
+    errdefer if (rollback_pending) rollbackFileChanges(file_rollbacks.items);
+
     if (replace) {
         summary.removed = reg.accounts.items.len;
         try cloneRegistryAccountKeys(allocator, &reg, &replaced_account_keys);
@@ -182,7 +191,7 @@ pub fn importBundle(
         const existing_idx = findAccountIndexByAccountKey(&reg, account.record.account_key);
         const dest = try accountAuthPath(allocator, codex_home, account.record.account_key);
         defer allocator.free(dest);
-        try writeFile(dest, account.auth_json);
+        try writeFileWithRollback(allocator, &file_rollbacks, dest, account.auth_json);
 
         if (existing_idx) |idx| {
             try updateExistingAccountFromBundle(allocator, &reg.accounts.items[idx], &account.record);
@@ -196,28 +205,23 @@ pub fn importBundle(
 
     if (bundle.active_account_key) |key| {
         try setActiveAccountKey(allocator, &reg, key);
-    } else if (replace) {
-        if (reg.active_account_key) |key| allocator.free(key);
-        reg.active_account_key = null;
-        reg.active_account_activated_at_ms = null;
-    }
-
-    try storage.saveRegistry(allocator, codex_home, &reg);
-
-    if (bundle.active_account_key) |key| {
         const src = try accountAuthPath(allocator, codex_home, key);
         defer allocator.free(src);
         const dest = try activeAuthPath(allocator, codex_home);
         defer allocator.free(dest);
-        try copyManagedFile(src, dest);
+        try copyFileWithRollback(allocator, &file_rollbacks, src, dest);
     } else if (replace) {
+        if (reg.active_account_key) |key| allocator.free(key);
+        reg.active_account_key = null;
+        reg.active_account_activated_at_ms = null;
         const active_path = try activeAuthPath(allocator, codex_home);
         defer allocator.free(active_path);
-        std.Io.Dir.cwd().deleteFile(app_runtime.io(), active_path) catch |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        };
+        try deleteFileWithRollback(allocator, &file_rollbacks, active_path);
     }
+
+    try storage.saveRegistry(allocator, codex_home, &reg);
+    rollback_pending = false;
+
     if (replace) try deleteReplacedAccountSnapshots(allocator, codex_home, replaced_account_keys.items, bundle.accounts.items);
     return summary;
 }
@@ -322,10 +326,10 @@ fn validateAuthJsonForRecord(
     const chatgpt_account_id = info.chatgpt_account_id orelse return error.MissingAccountId;
     const chatgpt_user_id = info.chatgpt_user_id orelse return error.MissingChatgptUserId;
 
-    if (!std.mem.eql(u8, record_key, rec.account_key)) return error.BundleAccountMismatch;
-    if (!std.mem.eql(u8, email, rec.email)) return error.BundleAccountMismatch;
-    if (!std.mem.eql(u8, chatgpt_account_id, rec.chatgpt_account_id)) return error.BundleAccountMismatch;
-    if (!std.mem.eql(u8, chatgpt_user_id, rec.chatgpt_user_id)) return error.BundleAccountMismatch;
+    if (!std.mem.eql(u8, record_key, rec.account_key)) return error.BundleAccountKeyMismatch;
+    if (!std.mem.eql(u8, email, rec.email)) return error.BundleEmailMismatch;
+    if (!std.mem.eql(u8, chatgpt_account_id, rec.chatgpt_account_id)) return error.BundleChatgptAccountIdMismatch;
+    if (!std.mem.eql(u8, chatgpt_user_id, rec.chatgpt_user_id)) return error.BundleChatgptUserIdMismatch;
 }
 
 fn discardRuntimeState(allocator: std.mem.Allocator, rec: *AccountRecord) void {
@@ -350,8 +354,8 @@ fn readFilePathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return try readFileAlloc(file, allocator, 10 * 1024 * 1024);
 }
 
-fn writeBundleFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
-    if (builtin.os.tag == .windows) return writeBundleFileReplace(allocator, path, data);
+fn writeSensitiveFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
+    if (builtin.os.tag == .windows) return writeSensitiveFileReplace(allocator, path, data);
 
     var buf: [4096]u8 = undefined;
     var atomic_file = try std.Io.Dir.cwd().createFileAtomic(app_runtime.io(), path, .{
@@ -366,22 +370,13 @@ fn writeBundleFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: [
     try hardenSensitiveFile(path);
 }
 
-fn writeBundleFileReplace(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
+fn writeSensitiveFileReplace(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
     const timestamp = @as(i128, std.Io.Timestamp.now(app_runtime.io(), .real).toNanoseconds());
-    const temp_path = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ path, timestamp });
+    const temp_path = try writeUniqueSidecarFile(allocator, path, "tmp", data);
     defer allocator.free(temp_path);
-    const backup_path = try std.fmt.allocPrint(allocator, "{s}.bak.{d}", .{ path, timestamp });
+    errdefer std.Io.Dir.cwd().deleteFile(app_runtime.io(), temp_path) catch {};
+    const backup_path = try std.fmt.allocPrint(allocator, "{s}.bak.{d}.{d}", .{ path, timestamp, temp_path.len });
     defer allocator.free(backup_path);
-
-    {
-        var file = try std.Io.Dir.cwd().createFile(app_runtime.io(), temp_path, .{
-            .truncate = true,
-            .permissions = private_file_permissions,
-        });
-        defer file.close(app_runtime.io());
-        try file.writeStreamingAll(app_runtime.io(), data);
-        try file.sync(app_runtime.io());
-    }
 
     const had_original = blk: {
         std.Io.Dir.cwd().rename(path, std.Io.Dir.cwd(), backup_path, app_runtime.io()) catch |err| switch (err) {
@@ -404,6 +399,120 @@ fn writeBundleFileReplace(allocator: std.mem.Allocator, path: []const u8, data: 
         };
     }
     try hardenSensitiveFile(path);
+}
+
+fn writeUniqueSidecarFile(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    label: []const u8,
+    data: []const u8,
+) ![]u8 {
+    const timestamp = @as(i128, std.Io.Timestamp.now(app_runtime.io(), .real).toNanoseconds());
+    var counter: usize = 0;
+    while (counter < 64) : (counter += 1) {
+        const sidecar_path = try std.fmt.allocPrint(allocator, "{s}.{s}.{d}.{d}", .{ path, label, timestamp, counter });
+        errdefer allocator.free(sidecar_path);
+        var file = std.Io.Dir.cwd().createFile(app_runtime.io(), sidecar_path, .{
+            .truncate = false,
+            .exclusive = true,
+            .permissions = private_file_permissions,
+        }) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                allocator.free(sidecar_path);
+                continue;
+            },
+            else => return err,
+        };
+        defer file.close(app_runtime.io());
+        try file.writeStreamingAll(app_runtime.io(), data);
+        try file.sync(app_runtime.io());
+        return sidecar_path;
+    }
+    return error.TemporaryFileCollision;
+}
+
+fn writeFileWithRollback(
+    allocator: std.mem.Allocator,
+    rollbacks: *std.ArrayList(FileRollback),
+    path: []const u8,
+    data: []const u8,
+) !void {
+    try beginFileRollback(allocator, rollbacks, path);
+    try writeSensitiveFileAtomic(allocator, path, data);
+}
+
+fn copyFileWithRollback(
+    allocator: std.mem.Allocator,
+    rollbacks: *std.ArrayList(FileRollback),
+    src: []const u8,
+    dest: []const u8,
+) !void {
+    try beginFileRollback(allocator, rollbacks, dest);
+    try copyManagedFile(src, dest);
+}
+
+fn deleteFileWithRollback(
+    allocator: std.mem.Allocator,
+    rollbacks: *std.ArrayList(FileRollback),
+    path: []const u8,
+) !void {
+    try beginFileRollback(allocator, rollbacks, path);
+    std.Io.Dir.cwd().deleteFile(app_runtime.io(), path) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
+fn beginFileRollback(
+    allocator: std.mem.Allocator,
+    rollbacks: *std.ArrayList(FileRollback),
+    path: []const u8,
+) !void {
+    const owned_path = try allocator.dupe(u8, path);
+    errdefer allocator.free(owned_path);
+
+    var backup_path: ?[]u8 = null;
+    const existing = readFilePathAlloc(allocator, path) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+    if (existing) |bytes| {
+        defer allocator.free(bytes);
+        backup_path = try writeUniqueSidecarFile(allocator, path, "rollback", bytes);
+    }
+    errdefer if (backup_path) |backup| {
+        std.Io.Dir.cwd().deleteFile(app_runtime.io(), backup) catch {};
+        allocator.free(backup);
+    };
+
+    try rollbacks.append(allocator, .{
+        .path = owned_path,
+        .backup_path = backup_path,
+    });
+}
+
+fn rollbackFileChanges(rollbacks: []const FileRollback) void {
+    var idx = rollbacks.len;
+    while (idx > 0) {
+        idx -= 1;
+        const rollback = rollbacks[idx];
+        if (rollback.backup_path) |backup_path| {
+            copyManagedFile(backup_path, rollback.path) catch {};
+        } else {
+            std.Io.Dir.cwd().deleteFile(app_runtime.io(), rollback.path) catch {};
+        }
+    }
+}
+
+fn cleanupFileRollbacks(allocator: std.mem.Allocator, rollbacks: *std.ArrayList(FileRollback)) void {
+    for (rollbacks.items) |rollback| {
+        if (rollback.backup_path) |backup_path| {
+            std.Io.Dir.cwd().deleteFile(app_runtime.io(), backup_path) catch {};
+            allocator.free(backup_path);
+        }
+        allocator.free(rollback.path);
+    }
+    rollbacks.deinit(allocator);
 }
 
 fn cloneRegistryAccountKeys(allocator: std.mem.Allocator, reg: *const Registry, keys: *std.ArrayList([]u8)) !void {

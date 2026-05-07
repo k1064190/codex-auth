@@ -223,7 +223,7 @@ test "Scenario: Given bundle auth mismatch when importing then registry is uncha
     defer gpa.free(bad_bundle);
     try fs.cwd().writeFile(.{ .sub_path = bad_bundle_path, .data = bad_bundle });
 
-    try std.testing.expectError(error.BundleAccountMismatch, registry.importBundle(gpa, codex_home, bad_bundle_path, false));
+    try std.testing.expectError(error.BundleAccountKeyMismatch, registry.importBundle(gpa, codex_home, bad_bundle_path, false));
 
     var loaded = try registry.loadRegistry(gpa, codex_home);
     defer loaded.deinit(gpa);
