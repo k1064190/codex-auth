@@ -77,7 +77,7 @@ const BundleAccountOut = struct {
     last_usage: ?common.RateLimitSnapshot = null,
     last_usage_at: ?i64 = null,
     last_local_rollout: ?common.RolloutSignature = null,
-    auth_json: []const u8,
+    auth_json: []u8,
 };
 
 const BundleOut = struct {
@@ -100,7 +100,7 @@ pub fn exportBundle(
 ) !usize {
     var accounts = std.ArrayList(BundleAccountOut).empty;
     defer {
-        for (accounts.items) |account| allocator.free(@constCast(account.auth_json));
+        for (accounts.items) |account| allocator.free(account.auth_json);
         accounts.deinit(allocator);
     }
 
@@ -306,7 +306,7 @@ fn validateAuthJsonForRecord(
     const info = try auth.parseAuthInfoData(allocator, auth_json);
     defer info.deinit(allocator);
 
-    const record_key = info.record_key orelse return error.MissingChatgptUserId;
+    const record_key = info.record_key orelse return error.MissingAccountKey;
     const email = info.email orelse return error.MissingEmail;
     const chatgpt_account_id = info.chatgpt_account_id orelse return error.MissingAccountId;
     const chatgpt_user_id = info.chatgpt_user_id orelse return error.MissingChatgptUserId;
