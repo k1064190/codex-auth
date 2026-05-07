@@ -4,6 +4,7 @@
 
 ```shell
 codex-auth import <path> [--alias <alias>]
+codex-auth import --bundle <path> [--replace]
 codex-auth import --cpa [<path>] [--alias <alias>]
 codex-auth import --purge [<path>]
 ```
@@ -15,6 +16,16 @@ codex-auth import --purge [<path>]
 - Directory imports are non-recursive.
 - `--alias` applies only to a single imported file.
 - Directory import ignores `--alias`.
+
+## Bundle Import
+
+`--bundle` imports a bundle created by `codex-auth export`.
+
+- Default mode merges the bundle into the local registry.
+- Merge mode updates bundled accounts and settings, and keeps local-only accounts.
+- Merge mode keeps existing local usage state for matching accounts.
+- `--replace` removes local managed accounts before importing the bundle.
+- `--bundle` cannot be combined with `--alias`, `--cpa`, or `--purge`.
 
 ## CLIProxyAPI Import
 
@@ -45,3 +56,4 @@ Use `--purge` as a recovery tool when the registry index is out of sync with the
 - `stderr` receives skipped rows and warnings.
 - Parse failures render as `MalformedJson`.
 - Validation failures keep explicit names such as `MissingEmail` or `MissingChatgptUserId`.
+- Bundle imports print a bundle summary with imported, updated, and removed counts.

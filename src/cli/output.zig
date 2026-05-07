@@ -50,6 +50,25 @@ pub fn printImportReport(report: *const registry.ImportReport) !void {
     try writeImportReport(stdout.out(), &stderr_writer.interface, report);
 }
 
+pub fn printExportSummary(count: usize, path: []const u8) !void {
+    var stdout: io_util.Stdout = undefined;
+    stdout.init();
+    const out = stdout.out();
+    try out.print("Exported {d} account(s) to {s}\n", .{ count, path });
+    try out.flush();
+}
+
+pub fn printBundleImportSummary(summary: *const registry.BundleImportSummary) !void {
+    var stdout: io_util.Stdout = undefined;
+    stdout.init();
+    const out = stdout.out();
+    try out.print(
+        "Bundle Import Summary: {d} imported, {d} updated, {d} removed\n",
+        .{ summary.imported, summary.updated, summary.removed },
+    );
+    try out.flush();
+}
+
 pub fn writeImportReport(
     out: *std.Io.Writer,
     err_out: *std.Io.Writer,

@@ -456,5 +456,6 @@ pub fn loadSingleFileImportAuthInfo(
                 },
             };
         },
+        .bundle => null,
     };
 }

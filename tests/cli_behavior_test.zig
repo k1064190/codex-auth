@@ -144,6 +144,52 @@ test "Scenario: Given import cpa without path when parsing then cpa mode is pres
     }
 }
 
+test "Scenario: Given export path when parsing then export options are preserved" {
+    const gpa = std.testing.allocator;
+    const args = [_][:0]const u8{ "codex-auth", "export", "/tmp/codex-auth-bundle.json" };
+    var result = try cli.commands.parseArgs(gpa, &args);
+    defer cli.commands.freeParseResult(gpa, &result);
+
+    switch (result) {
+        .command => |cmd| switch (cmd) {
+            .export_auth => |opts| try std.testing.expectEqualStrings("/tmp/codex-auth-bundle.json", opts.path),
+            else => return error.TestExpectedEqual,
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "Scenario: Given import bundle with replace when parsing then bundle mode is preserved" {
+    const gpa = std.testing.allocator;
+    const args = [_][:0]const u8{ "codex-auth", "import", "--bundle", "/tmp/codex-auth-bundle.json", "--replace" };
+    var result = try cli.commands.parseArgs(gpa, &args);
+    defer cli.commands.freeParseResult(gpa, &result);
+
+    switch (result) {
+        .command => |cmd| switch (cmd) {
+            .import_auth => |opts| {
+                try std.testing.expect(opts.auth_path != null);
+                try std.testing.expectEqualStrings("/tmp/codex-auth-bundle.json", opts.auth_path.?);
+                try std.testing.expect(opts.alias == null);
+                try std.testing.expect(!opts.purge);
+                try std.testing.expect(opts.replace);
+                try std.testing.expectEqual(cli.types.ImportSource.bundle, opts.source);
+            },
+            else => return error.TestExpectedEqual,
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "Scenario: Given import bundle with alias when parsing then usage error is returned" {
+    const gpa = std.testing.allocator;
+    const args = [_][:0]const u8{ "codex-auth", "import", "--bundle", "/tmp/codex-auth-bundle.json", "--alias", "personal" };
+    var result = try cli.commands.parseArgs(gpa, &args);
+    defer cli.commands.freeParseResult(gpa, &result);
+
+    try expectUsageError(result, .import_auth, "`--alias` cannot be combined with `--bundle`");
+}
+
 test "Scenario: Given import cpa with purge when parsing then usage error is returned" {
     const gpa = std.testing.allocator;
     const args = [_][:0]const u8{ "codex-auth", "import", "--cpa", "--purge" };
@@ -299,7 +345,9 @@ test "Scenario: Given help when rendering then login and command help notes are 
     try std.testing.expect(std.mem.indexOf(u8, help, "--version, -V") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "list [--live] [--api|--skip-api]") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "login [--device-auth]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "export <path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "import <path> [--alias <alias>]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "import --bundle <path> [--replace]") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "import --cpa [<path>] [--alias <alias>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "import --alias <alias>\n") == null);
     try std.testing.expect(std.mem.indexOf(u8, help, "Run `codex-auth <command> --help` for command-specific usage details.") != null);
@@ -364,10 +412,28 @@ test "Scenario: Given complex command help when rendering then examples are show
     const help = aw.written();
     try std.testing.expect(std.mem.indexOf(u8, help, "codex-auth import") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "Usage:\n  codex-auth import <path> [--alias <alias>]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "codex-auth import --bundle <path> [--replace]") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "Options:\n  <path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "--bundle <path>  Import accounts and settings from an exported bundle.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "--replace        Replace local managed accounts with bundle accounts.") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "Uses `~/.cli-proxy-api` when omitted.") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "--purge [<path>] Rebuild `registry.json` from auth files.") != null);
     try std.testing.expect(std.mem.indexOf(u8, help, "Examples:\n  codex-auth import /path/to/auth.json --alias personal\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "codex-auth import --bundle codex-auth-bundle.json") != null);
+}
+
+test "Scenario: Given export command help when rendering then bundle usage is shown" {
+    const gpa = std.testing.allocator;
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+
+    try cli.help.writeCommandHelp(&aw.writer, false, .export_auth);
+
+    const help = aw.written();
+    try std.testing.expect(std.mem.indexOf(u8, help, "codex-auth export") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "Export accounts and settings to a local bundle.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "Usage:\n  codex-auth export <path>\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help, "Examples:\n  codex-auth export codex-auth-bundle.json\n") != null);
 }
 
 test "Scenario: Given switch command help when rendering then target forms and multi-match behavior are shown" {
