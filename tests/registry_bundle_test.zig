@@ -154,6 +154,12 @@ test "Scenario: Given exported bundle when importing with replace then local-onl
     try std.testing.expect(fixtures.findAccountIndexByEmail(&loaded, "local@example.com") == null);
     const alpha_idx = fixtures.findAccountIndexByEmail(&loaded, "alpha@example.com") orelse return error.TestExpectedEqual;
     try std.testing.expect(loaded.accounts.items[alpha_idx].last_usage == null);
+
+    const local_key = try fixtures.accountKeyForEmailAlloc(gpa, "local@example.com");
+    defer gpa.free(local_key);
+    const local_snapshot_path = try registry.accountAuthPath(gpa, target_home, local_key);
+    defer gpa.free(local_snapshot_path);
+    try std.testing.expectError(error.FileNotFound, fs.cwd().openFile(local_snapshot_path, .{}));
 }
 
 test "Scenario: Given bundle auth mismatch when importing then registry is unchanged" {

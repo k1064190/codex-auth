@@ -1,6 +1,7 @@
 const std = @import("std");
 const app_runtime = @import("../core/runtime.zig");
 const auth = @import("../auth/auth.zig");
+const builtin = @import("builtin");
 const common = @import("common.zig");
 const parse = @import("parse.zig");
 const storage = @import("storage.zig");
@@ -15,10 +16,13 @@ const LiveConfig = common.LiveConfig;
 const Registry = common.Registry;
 const activeAuthPath = common.activeAuthPath;
 const accountAuthPath = common.accountAuthPath;
+const copyManagedFile = common.copyManagedFile;
 const ensureAccountsDir = common.ensureAccountsDir;
 const freeAccountRecord = common.freeAccountRecord;
 const freeRateLimitSnapshot = common.freeRateLimitSnapshot;
 const freeRolloutSignature = common.freeRolloutSignature;
+const hardenSensitiveFile = common.hardenSensitiveFile;
+const private_file_permissions = common.private_file_permissions;
 const readFileAlloc = common.readFileAlloc;
 const replaceOptionalStringAlloc = common.replaceOptionalStringAlloc;
 const writeFile = common.writeFile;
@@ -27,8 +31,7 @@ const parseApiConfig = parse.parseApiConfig;
 const parseLiveConfig = parse.parseLiveConfig;
 const parseAccountRecord = storage_parse.parseAccountRecord;
 const findAccountIndexByAccountKey = account_ops.findAccountIndexByAccountKey;
-const replaceActiveAuthWithAccountByKey = account_ops.replaceActiveAuthWithAccountByKey;
-const removeAccounts = account_ops.removeAccounts;
+const setActiveAccountKey = account_ops.setActiveAccountKey;
 
 const bundle_format = "codex-auth.export.v1";
 const bundle_schema_version: u32 = 1;
@@ -142,7 +145,7 @@ pub fn exportBundle(
     defer aw.deinit();
     try std.json.Stringify.value(out, .{ .whitespace = .indent_2 }, &aw.writer);
     try aw.writer.writeAll("\n");
-    try writeFile(export_path, aw.written());
+    try writeBundleFileAtomic(allocator, export_path, aw.written());
     return accounts.items.len;
 }
 
@@ -162,14 +165,12 @@ pub fn importBundle(
     defer reg.deinit(allocator);
 
     var summary = BundleImportSummary{};
+    var replaced_account_keys = std.ArrayList([]u8).empty;
+    defer freeOwnedStrings(allocator, &replaced_account_keys);
     if (replace) {
         summary.removed = reg.accounts.items.len;
-        if (reg.accounts.items.len > 0) {
-            const indices = try allocator.alloc(usize, reg.accounts.items.len);
-            defer allocator.free(indices);
-            for (indices, 0..) |*slot, idx| slot.* = idx;
-            try removeAccounts(allocator, codex_home, &reg, indices);
-        }
+        try cloneRegistryAccountKeys(allocator, &reg, &replaced_account_keys);
+        clearRegistryAccountsOnly(allocator, &reg);
     }
 
     reg.auto_switch = bundle.auto_switch;
@@ -194,11 +195,22 @@ pub fn importBundle(
     }
 
     if (bundle.active_account_key) |key| {
-        try replaceActiveAuthWithAccountByKey(allocator, codex_home, &reg, key);
+        try setActiveAccountKey(allocator, &reg, key);
     } else if (replace) {
         if (reg.active_account_key) |key| allocator.free(key);
         reg.active_account_key = null;
         reg.active_account_activated_at_ms = null;
+    }
+
+    try storage.saveRegistry(allocator, codex_home, &reg);
+
+    if (bundle.active_account_key) |key| {
+        const src = try accountAuthPath(allocator, codex_home, key);
+        defer allocator.free(src);
+        const dest = try activeAuthPath(allocator, codex_home);
+        defer allocator.free(dest);
+        try copyManagedFile(src, dest);
+    } else if (replace) {
         const active_path = try activeAuthPath(allocator, codex_home);
         defer allocator.free(active_path);
         std.Io.Dir.cwd().deleteFile(app_runtime.io(), active_path) catch |err| switch (err) {
@@ -206,8 +218,7 @@ pub fn importBundle(
             else => return err,
         };
     }
-
-    try storage.saveRegistry(allocator, codex_home, &reg);
+    if (replace) try deleteReplacedAccountSnapshots(allocator, codex_home, replaced_account_keys.items, bundle.accounts.items);
     return summary;
 }
 
@@ -337,6 +348,97 @@ fn readFilePathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     var file = try std.Io.Dir.cwd().openFile(app_runtime.io(), path, .{});
     defer file.close(app_runtime.io());
     return try readFileAlloc(file, allocator, 10 * 1024 * 1024);
+}
+
+fn writeBundleFileAtomic(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
+    if (builtin.os.tag == .windows) return writeBundleFileReplace(allocator, path, data);
+
+    var buf: [4096]u8 = undefined;
+    var atomic_file = try std.Io.Dir.cwd().createFileAtomic(app_runtime.io(), path, .{
+        .replace = true,
+        .permissions = private_file_permissions,
+    });
+    defer atomic_file.deinit(app_runtime.io());
+    var file_writer = atomic_file.file.writer(app_runtime.io(), &buf);
+    try file_writer.interface.writeAll(data);
+    try file_writer.interface.flush();
+    try atomic_file.replace(app_runtime.io());
+    try hardenSensitiveFile(path);
+}
+
+fn writeBundleFileReplace(allocator: std.mem.Allocator, path: []const u8, data: []const u8) !void {
+    const timestamp = @as(i128, std.Io.Timestamp.now(app_runtime.io(), .real).toNanoseconds());
+    const temp_path = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ path, timestamp });
+    defer allocator.free(temp_path);
+    const backup_path = try std.fmt.allocPrint(allocator, "{s}.bak.{d}", .{ path, timestamp });
+    defer allocator.free(backup_path);
+
+    {
+        var file = try std.Io.Dir.cwd().createFile(app_runtime.io(), temp_path, .{
+            .truncate = true,
+            .permissions = private_file_permissions,
+        });
+        defer file.close(app_runtime.io());
+        try file.writeStreamingAll(app_runtime.io(), data);
+        try file.sync(app_runtime.io());
+    }
+
+    const had_original = blk: {
+        std.Io.Dir.cwd().rename(path, std.Io.Dir.cwd(), backup_path, app_runtime.io()) catch |err| switch (err) {
+            error.FileNotFound => break :blk false,
+            else => return err,
+        };
+        break :blk true;
+    };
+    errdefer {
+        std.Io.Dir.cwd().deleteFile(app_runtime.io(), temp_path) catch {};
+        if (had_original) {
+            std.Io.Dir.cwd().rename(backup_path, std.Io.Dir.cwd(), path, app_runtime.io()) catch {};
+        }
+    }
+    try std.Io.Dir.cwd().rename(temp_path, std.Io.Dir.cwd(), path, app_runtime.io());
+    if (had_original) {
+        std.Io.Dir.cwd().deleteFile(app_runtime.io(), backup_path) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+    }
+    try hardenSensitiveFile(path);
+}
+
+fn cloneRegistryAccountKeys(allocator: std.mem.Allocator, reg: *const Registry, keys: *std.ArrayList([]u8)) !void {
+    for (reg.accounts.items) |rec| {
+        const key = try allocator.dupe(u8, rec.account_key);
+        errdefer allocator.free(key);
+        try keys.append(allocator, key);
+    }
+}
+
+fn clearRegistryAccountsOnly(allocator: std.mem.Allocator, reg: *Registry) void {
+    for (reg.accounts.items) |*rec| freeAccountRecord(allocator, rec);
+    reg.accounts.clearRetainingCapacity();
+    if (reg.active_account_key) |key| allocator.free(key);
+    reg.active_account_key = null;
+    reg.active_account_activated_at_ms = null;
+}
+
+fn deleteReplacedAccountSnapshots(
+    allocator: std.mem.Allocator,
+    codex_home: []const u8,
+    replaced_keys: []const []const u8,
+    bundle_accounts: []const BundleAccount,
+) !void {
+    for (replaced_keys) |key| {
+        if (findBundleAccountIndex(bundle_accounts, key) != null) continue;
+        const path = try accountAuthPath(allocator, codex_home, key);
+        defer allocator.free(path);
+        std.Io.Dir.cwd().deleteFile(app_runtime.io(), path) catch {};
+    }
+}
+
+fn freeOwnedStrings(allocator: std.mem.Allocator, strings: *std.ArrayList([]u8)) void {
+    for (strings.items) |value| allocator.free(value);
+    strings.deinit(allocator);
 }
 
 fn replaceOwnedString(allocator: std.mem.Allocator, target: *[]u8, value: []const u8) !void {
