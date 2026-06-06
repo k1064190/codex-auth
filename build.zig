@@ -70,6 +70,7 @@ pub fn build(b: *std.Build) void {
         "tests/compat_fs_test.zig",
         "tests/cli_integration_test.zig",
         "tests/lib_compile_test.zig",
+        "tests/registry_bundle_test.zig",
         "tests/registry_import_test.zig",
         "tests/registry_purge_import_test.zig",
         "tests/registry_test.zig",

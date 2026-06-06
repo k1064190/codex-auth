@@ -8,6 +8,12 @@ const refreshAccountNamesAfterImport = account_names.refreshAccountNamesAfterImp
 const defaultAccountFetcher = account_names.defaultAccountFetcher;
 
 pub fn handleImport(allocator: std.mem.Allocator, codex_home: []const u8, opts: cli.types.ImportOptions) !void {
+    if (opts.source == .bundle) {
+        const summary = try registry.importBundle(allocator, codex_home, opts.auth_path.?, opts.replace);
+        try cli.output.printBundleImportSummary(&summary);
+        return;
+    }
+
     if (opts.purge) {
         var report = try registry.purgeRegistryFromImportSource(allocator, codex_home, opts.auth_path, opts.alias);
         defer report.deinit(allocator);
@@ -21,6 +27,7 @@ pub fn handleImport(allocator: std.mem.Allocator, codex_home: []const u8, opts: 
     var report = switch (opts.source) {
         .standard => try registry.importAuthPath(allocator, codex_home, &reg, opts.auth_path.?, opts.alias),
         .cpa => try registry.importCpaPath(allocator, codex_home, &reg, opts.auth_path, opts.alias),
+        .bundle => unreachable,
     };
     defer report.deinit(allocator);
     if (report.appliedCount() > 0) {

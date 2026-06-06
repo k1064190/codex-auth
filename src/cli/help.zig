@@ -66,8 +66,10 @@ pub fn writeHelp(
     try writeCommandSummary(out, use_color, "list [--live] [--api|--skip-api]", "List available accounts");
     try writeCommandSummary(out, use_color, "status", "Show auto-switch, service, and usage API status");
     try writeCommandSummary(out, use_color, "login [--device-auth]", "Login and add the current account");
+    try writeCommandSummary(out, use_color, "export <path>", "Export accounts and settings to a bundle");
     try writeCommandSummary(out, use_color, "import", "Import auth files or rebuild registry");
     try writeCommandDetail(out, use_color, "import <path> [--alias <alias>]");
+    try writeCommandDetail(out, use_color, "import --bundle <path> [--replace]");
     try writeCommandDetail(out, use_color, "import --cpa [<path>] [--alias <alias>]");
     try writeCommandDetail(out, use_color, "import --purge [<path>]");
     try writeCommandSummary(out, use_color, "switch", "Switch the active account");
@@ -155,6 +157,7 @@ fn commandNameForTopic(topic: HelpTopic) []const u8 {
         .list => "list",
         .status => "status",
         .login => "login",
+        .export_auth => "export",
         .import_auth => "import",
         .switch_account => "switch",
         .remove_account => "remove",
@@ -170,6 +173,7 @@ fn commandDescriptionForTopic(topic: HelpTopic) []const u8 {
         .list => "List available accounts.",
         .status => "Show auto-switch, service, and usage API status.",
         .login => "Run `codex login` or `codex login --device-auth`, then add the current account.",
+        .export_auth => "Export accounts and settings to a local bundle.",
         .import_auth => "Import auth files or rebuild the registry.",
         .switch_account => "Switch the active account by alias, email, display number, or partial query.",
         .remove_account => "Remove one or more accounts by alias, email, display number, or partial query.",
@@ -181,7 +185,7 @@ fn commandDescriptionForTopic(topic: HelpTopic) []const u8 {
 
 fn commandHelpHasExamples(topic: HelpTopic) bool {
     return switch (topic) {
-        .import_auth, .switch_account, .remove_account, .config, .daemon => true,
+        .export_auth, .import_auth, .switch_account, .remove_account, .config, .daemon => true,
         else => false,
     };
 }
@@ -222,8 +226,10 @@ fn writeUsageLines(out: *std.Io.Writer, topic: HelpTopic) !void {
             try out.writeAll("  codex-auth login\n");
             try out.writeAll("  codex-auth login --device-auth\n");
         },
+        .export_auth => try out.writeAll("  codex-auth export <path>\n"),
         .import_auth => {
             try out.writeAll("  codex-auth import <path> [--alias <alias>]\n");
+            try out.writeAll("  codex-auth import --bundle <path> [--replace]\n");
             try out.writeAll("  codex-auth import --cpa [<path>] [--alias <alias>]\n");
             try out.writeAll("  codex-auth import --purge [<path>]\n");
         },
@@ -259,6 +265,7 @@ pub fn helpCommandForTopic(topic: HelpTopic) []const u8 {
         .list => "codex-auth list --help",
         .status => "codex-auth status --help",
         .login => "codex-auth login --help",
+        .export_auth => "codex-auth export --help",
         .import_auth => "codex-auth import --help",
         .switch_account => "codex-auth switch --help",
         .remove_account => "codex-auth remove --help",
@@ -286,6 +293,8 @@ fn writeOptionLines(out: *std.Io.Writer, topic: HelpTopic) !void {
         },
         .import_auth => {
             try out.writeAll("  <path>           Import one auth file or every supported auth file in a directory.\n");
+            try out.writeAll("  --bundle <path>  Import accounts and settings from an exported bundle.\n");
+            try out.writeAll("  --replace        Replace local managed accounts with bundle accounts.\n");
             try out.writeAll("  --cpa [<path>]   Import CPA flat token JSON from a file or directory. Uses `~/.cli-proxy-api` when omitted.\n");
             try out.writeAll("  --alias <alias>  Set an alias for a single imported account.\n");
             try out.writeAll("  --purge [<path>] Rebuild `registry.json` from auth files. Uses the accounts directory when omitted.\n");
@@ -348,8 +357,10 @@ fn writeExampleLines(out: *std.Io.Writer, topic: HelpTopic) !void {
             try out.writeAll("  codex-auth login\n");
             try out.writeAll("  codex-auth login --device-auth\n");
         },
+        .export_auth => try out.writeAll("  codex-auth export codex-auth-bundle.json\n"),
         .import_auth => {
             try out.writeAll("  codex-auth import /path/to/auth.json --alias personal\n");
+            try out.writeAll("  codex-auth import --bundle codex-auth-bundle.json\n");
             try out.writeAll("  codex-auth import --cpa /path/to/token.json --alias work\n");
             try out.writeAll("  codex-auth import --purge\n");
         },

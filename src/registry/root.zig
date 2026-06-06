@@ -5,6 +5,7 @@ const account_api = @import("../api/account.zig");
 const common = @import("common.zig");
 const clean = @import("clean.zig");
 const account_ops = @import("account_ops.zig");
+const bundle = @import("bundle.zig");
 const parse = @import("parse.zig");
 const import_mod = @import("import.zig");
 const storage = @import("storage.zig");
@@ -140,6 +141,10 @@ const syncActiveAccountFromAuthWithImporter = account_ops.syncActiveAccountFromA
 pub const loadRegistry = storage.loadRegistry;
 pub const saveRegistry = storage.saveRegistry;
 const defaultRegistry = storage.defaultRegistry;
+
+pub const BundleImportSummary = bundle.BundleImportSummary;
+pub const exportBundle = bundle.exportBundle;
+pub const importBundle = bundle.importBundle;
 
 pub fn autoImportActiveAuth(allocator: std.mem.Allocator, codex_home: []const u8, reg: *Registry) !bool {
     if (reg.accounts.items.len != 0) return false;

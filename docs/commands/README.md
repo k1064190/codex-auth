@@ -8,6 +8,7 @@ This directory documents command behavior by command. Use `codex-auth <command> 
 |---------|---------|
 | `list` | [docs/commands/list.md](./list.md) |
 | `login` | [docs/commands/login.md](./login.md) |
+| `export` | [docs/commands/export.md](./export.md) |
 | `import` | [docs/commands/import.md](./import.md) |
 | `switch` | [docs/commands/switch.md](./switch.md) |
 | `remove` | [docs/commands/remove.md](./remove.md) |

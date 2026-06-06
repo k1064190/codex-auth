@@ -31,7 +31,7 @@ pub fn isHandledCliError(err: anyerror) bool {
 pub fn shouldReconcileManagedService(cmd: cli.types.Command) bool {
     if (hasNonEmptyEnvVar(skip_service_reconcile_env)) return false;
     return switch (cmd) {
-        .help, .version, .status, .daemon => false,
+        .help, .version, .status, .daemon, .export_auth => false,
         else => true,
     };
 }

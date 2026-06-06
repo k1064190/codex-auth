@@ -61,6 +61,7 @@ Detailed command documentation lives in [docs/commands/README.md](./docs/command
 |---------|-------------|
 | [`codex-auth list [--live] [--api\|--skip-api]`](./docs/commands/list.md) | List stored accounts and usage state |
 | [`codex-auth login [--device-auth]`](./docs/commands/login.md) | Run `codex login`, then add the current account |
+| [`codex-auth export <path>`](./docs/commands/export.md) | Export accounts and settings to a bundle |
 | [`codex-auth switch [--live] [--api\|--skip-api]`](./docs/commands/switch.md) | Switch the active account interactively |
 | [`codex-auth switch <query>`](./docs/commands/switch.md) | Switch directly by row number or account selector |
 | [`codex-auth remove [--live] [--api\|--skip-api]`](./docs/commands/remove.md) | Remove accounts interactively |
@@ -73,6 +74,7 @@ Detailed command documentation lives in [docs/commands/README.md](./docs/command
 | Command | Description |
 |---------|-------------|
 | [`codex-auth import <path> [--alias <alias>]`](./docs/commands/import.md) | Import a single auth file or batch import a folder |
+| [`codex-auth import --bundle <path> [--replace]`](./docs/commands/import.md) | Import an exported accounts/settings bundle |
 | [`codex-auth import --cpa [<path>]`](./docs/commands/import.md) | Import CLIProxyAPI token JSON |
 | [`codex-auth import --purge [<path>]`](./docs/commands/import.md) | Rebuild `registry.json` from auth files |
 | [`codex-auth clean`](./docs/commands/clean.md) | Delete managed backup and stale account files |
@@ -92,6 +94,8 @@ codex-auth list
 codex-auth switch
 codex-auth switch 02
 codex-auth remove work
+codex-auth export codex-auth-bundle.json
+codex-auth import --bundle codex-auth-bundle.json
 codex-auth import /path/to/auth.json --alias personal
 codex-auth config api disable
 codex-auth status

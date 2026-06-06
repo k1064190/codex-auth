@@ -11,12 +11,16 @@ pub const ListOptions = struct {
 pub const LoginOptions = struct {
     device_auth: bool = false,
 };
-pub const ImportSource = enum { standard, cpa };
+pub const ImportSource = enum { standard, cpa, bundle };
 pub const ImportOptions = struct {
     auth_path: ?[]u8,
     alias: ?[]u8,
     purge: bool,
+    replace: bool = false,
     source: ImportSource,
+};
+pub const ExportOptions = struct {
+    path: []u8,
 };
 pub const SwitchOptions = struct {
     query: ?[]u8,
@@ -55,6 +59,7 @@ pub const HelpTopic = enum {
     list,
     status,
     login,
+    export_auth,
     import_auth,
     switch_account,
     remove_account,
@@ -66,6 +71,7 @@ pub const HelpTopic = enum {
 pub const Command = union(enum) {
     list: ListOptions,
     login: LoginOptions,
+    export_auth: ExportOptions,
     import_auth: ImportOptions,
     switch_account: SwitchOptions,
     remove_account: RemoveOptions,

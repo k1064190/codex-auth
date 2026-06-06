@@ -25,3 +25,10 @@ After modifying any `.zig` file, always run `zig build run -- list` to verify th
 - Use the paths reported by `zig env` as the source of truth, especially `std_dir` for the standard library and `lib_dir` for other bundled Zig libraries.
 - Prefer evidence from local sources: symbol definitions, nearby tests, and existing call sites in this repository.
 - If the needed behavior is not clear from `std_dir`, inspect other Zig sources and tests under the local `lib_dir` tree as needed.
+
+# Failure Log
+
+- [2026-05-06] `zig build test` failed because the new `ImportSource.bundle` arm was inserted into an error catch switch and isolated integration tests could not find `zig` on PATH.
+- [2026-05-06] `zig build run -- list` failed because isolated `CODEX_HOME=/tmp/codex-auth-bundle/.codex` did not exist.
+- [2026-05-07] Gemini subagent code review failed because both `pro` and `flash` model attempts hit Gemini API quota limits after earlier CLI parsing/tool-access failures.
+- [2026-05-07] Gemini diff-only review command initially failed because the isolated `/tmp/codex-auth-gemini-review` workdir was used before it existed.
